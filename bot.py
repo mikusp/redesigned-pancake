@@ -15,6 +15,7 @@ import io
 import json
 from collections import namedtuple
 import os
+import sys
 from itertools import chain, groupby
 
 from google.auth.transport.requests import Request
@@ -38,6 +39,8 @@ ADMIN_ROLE_ID=int(os.environ['ADMIN_ROLE_ID'])
 ADMIN_ID=int(os.environ['ADMIN_ID'])
 MOD_ROLE_ID=int(os.environ['MOD_ROLE_ID'])
 CONTACT_SUBSTITUTIONS="substitutions.json"
+
+os.chdir(sys.path[0])
 
 substitutions = {}
 with open(CONTACT_SUBSTITUTIONS) as f:
