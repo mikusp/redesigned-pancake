@@ -149,7 +149,7 @@ class Fb:
         args = {
             'name': name.text,
             'location': location.text,
-            'start_time': tz.localize(start_dtime),
+            'start_time': tz.localize(start_dtime) if start_dtime else None,
             'cover_img_url': cover_img,
             'description': description.text,
             'fb_url': event_url

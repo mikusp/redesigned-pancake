@@ -9,6 +9,7 @@ from discord.ext import tasks
 import pprint
 import urllib
 import pytz
+import validators
 
 from fb import Fb, driver
 import io
@@ -16,6 +17,7 @@ import json
 from collections import namedtuple
 import os
 import sys
+import itertools
 from itertools import chain, groupby
 
 from google.auth.transport.requests import Request
@@ -35,6 +37,7 @@ OAUTH_TOKEN = os.environ['BOT_TOKEN']
 FB_ACCESS_TOKEN = os.environ['FB_TOKEN']
 GUILD_ID=int(os.environ['GUILD_ID'])
 UPCOMING_EVENTS=int(os.environ['UPCOMING_EVENTS'])
+NEW_EVENTS=int(os.environ['NEW_EVENTS'])
 ADMIN_ROLE_ID=int(os.environ['ADMIN_ROLE_ID'])
 ADMIN_ID=int(os.environ['ADMIN_ID'])
 MOD_ROLE_ID=int(os.environ['MOD_ROLE_ID'])
@@ -305,6 +308,74 @@ class Event:
         
         summary = " - ".join([p for p in [time, self.name, url, organizer, location] if p is not None])
         return [p for p in [summary, description] if p is not None]
+    
+    def summary(self):
+        assert self.active, f"{self.name} is deleted"
+
+        organizer = None
+        try:
+            organizer = self.author if self.author else self.email
+        except AttributeError:
+            pass
+
+        if organizer is not None and not organizer.startswith('<'):
+            try:
+                sub = substitutions[organizer]
+                organizer = f'[ORGANIZER]({sub})'
+            except:
+                pass
+        
+        url = None
+        try:
+            if hasattr(self, 'url'):
+                url = f'[LINK]({self.url}'
+            if hasattr(self, 'fb_url'):
+                url = f'[FB]({self.fb_url})'
+        except AttributeError:
+            pass
+        
+        location = None
+        try:
+            loc = self.location
+            loc = urllib.parse.quote(loc)
+            gmaps_link = 'https://www.google.com/maps/search/?api=1&query=' + loc
+            location = f"[{self.location.split(',')[0]}]({gmaps_link})"
+        except AttributeError:
+            pass
+
+        time = None
+        try:
+            time = str(self.time) if self.time else 'NO TIME'
+        except AttributeError:
+            pass
+        
+        summary = " - ".join([p for p in [time, self.name, url, organizer, location] if p is not None])
+        return [summary]
+    
+
+    def make_embed(self, description_limit=4096) -> discord.Embed:
+        description = self.description[0:description_limit].replace('<br>', '\n').replace('<br />', '\n')
+        embed = discord.Embed(title=self.name, description=description, url=getattr(self, 'fb_url', None))
+        if hasattr(self, 'img'):
+            embed.set_image(url=self.img)
+        organizer = None
+        try:
+            organizer = self.author if self.author else self.email
+            if organizer is not None and not organizer.startswith('<'):
+                try:
+                    sub = substitutions[organizer]
+                    organizer = sub
+                except:
+                    pass
+            embed.set_author(name=organizer, url=organizer if validators.url(organizer) else None)
+        except AttributeError:
+            pass
+        location = getattr(self, 'location', '').split(',')[0]
+        embed.add_field(name='Venue', value=location, inline=True)
+        city = getattr(self, 'city', '')
+        embed.add_field(name='City', value=city, inline=True)
+        embed.add_field(name='Time', value=self.approx_datetime().strftime('%a, %d %b %Y, %H:%M'), inline=True)
+        return embed
 
     def validate(self):
         errors = []
@@ -399,8 +470,8 @@ class Schedule:
 
     def remove_event(self, event_value: str):
         for idx, e in enumerate(self.events):
-            if e.selector_value() == event_value:
-                self.events[idx] = e.delete()
+            if e.selector_value() in event_value:
+                del self.events[idx]
                 break
         return self
 
@@ -439,47 +510,82 @@ class Schedule:
         return self
 
     def format_post(self):
+        embed_posts = []
         posts = []
 
         active_events = list(filter(lambda x: x.active(), self.events))
 
-        # for e in active_events:
-        #     print(vars(e))
-        todays_events = list(filter(lambda x: x.date == datetime.date.today(), active_events))
-        tomorrows_events = list(filter(lambda x: x.date == datetime.date.today() + datetime.timedelta(days=1), active_events))
+        today = datetime.date.today()
+        d = lambda x: today + datetime.timedelta(days=x)
+        dates_in_this_week = []
+        if today.isoweekday == 1:
+            dates_in_this_week = list(itertools.islice(map(d, count(0)), 7))
+        else:
+            dates_in_this_week = list(itertools.takewhile(lambda x: x.isoweekday() != 1, map(d, itertools.count(0))))
+
+        for date in dates_in_this_week:
+            date_events = list(filter(lambda x: x.date == date, active_events))
+
+            embeds = list(map(lambda x: x.make_embed(description_limit=250), date_events))
+
+            msg_content = f"**======== {date.strftime('%A, %B %e')} =======**"
+            embed_posts.append((msg_content, embeds))
         
-        day = []
-        day.append(f'**======= TODAY\'S EVENTS - {datetime.date.today()} =======**')
-        day.append('\n\n')
-        for e in todays_events:
-            day.extend(e.pretty())
-            day.append('\n\n')
-        posts.append(day)
+        last_embed_date = dates_in_this_week[-1]
+        later_events = list(filter(lambda x: x.date > last_embed_date, active_events))
 
-        day = []
-        day.append(f'**======= TOMORROW\'S EVENTS - {datetime.date.today() + datetime.timedelta(days=1)} =======**')
-        day.append('\n\n')
-        for e in tomorrows_events:
-            day.extend(e.pretty())
-            day.append('\n\n')
-        posts.append(day)
-
-        later_events = list(filter(lambda x: x.date > datetime.date.today() + datetime.timedelta(days=1), active_events))
         for d, evs in groupby(later_events, lambda x: x.date):
             day = []
-            day.append(f'**======= EVENTS - {d} =======**')
-            day.append('\n\n')
+            day.append(f"**======= {d.strftime('%A, %B %e')} =======**")
+            day.append('\n')
             for e in evs:
-                day.extend(e.pretty())
-                day.append('\n\n')
+                day.extend(e.summary())
+                day.append('\n')
             posts.append(day)
 
-        return list(chain.from_iterable(map(self.split_post, posts)))
+        # for e in active_events:
+        #     print(vars(e))
+        # todays_events = list(filter(lambda x: x.date == datetime.date.today(), active_events))
+        # tomorrows_events = list(filter(lambda x: x.date == datetime.date.today() + datetime.timedelta(days=1), active_events))
+        
+        # day = []
+        # day.append(f'**======= TODAY\'S EVENTS - {datetime.date.today()} =======**')
+        # day.append('\n\n')
+        # for e in todays_events:
+        #     day.extend(e.pretty())
+        #     day.append('\n\n')
+        # posts.append(day)
+
+        # day = []
+        # day.append(f'**======= TOMORROW\'S EVENTS - {datetime.date.today() + datetime.timedelta(days=1)} =======**')
+        # day.append('\n\n')
+        # for e in tomorrows_events:
+        #     day.extend(e.pretty())
+        #     day.append('\n\n')
+        # posts.append(day)
+
+        # later_events = list(filter(lambda x: x.date > datetime.date.today() + datetime.timedelta(days=1), active_events))
+        # for d, evs in groupby(later_events, lambda x: x.date):
+        #     day = []
+        #     day.append(f'**======= EVENTS - {d} =======**')
+        #     day.append('\n\n')
+        #     for e in evs:
+        #         day.extend(e.pretty())
+        #         day.append('\n\n')
+        #     posts.append(day)
+
+        return (embed_posts, list(chain.from_iterable(map(self.split_post, posts))))
+
+async def send_announcement(ctx: discord.Interaction, event: Event):
+    channel = client.get_channel(NEW_EVENTS)
+    async with channel.typing():
+        await channel.send(embed=event.make_embed(), allowed_mentions=discord.AllowedMentions.none())
 
 async def add_event(ctx: discord.Interaction, schedule_message: discord.Message, event: Event):
     schedule = await Schedule.parse_msg(schedule_message)
     schedule.add_event(event)
     await set_events(ctx, schedule_message, schedule)
+    await send_announcement(ctx, event)
 
 async def clear_events(ctx: discord.Interaction, schedule_message: discord.Message):
     await set_events(ctx, schedule_message, Schedule([]))
@@ -491,7 +597,9 @@ async def set_events(ctx, schedule_message: discord.Message, schedule: Schedule)
     js = schedule.dump_json()
     if isinstance(ctx, discord.Interaction):
         ctx = ctx.followup
-    pinned_message_content, *other_messages = schedule.format_post()
+    posts = schedule.format_post()
+    embeds, texts = posts
+    pinned_message_content, *other_messages = embeds
     js_file = discord.File(io.BytesIO(js.encode()), spoiler=True, filename='schedule.json')
 
     channel = schedule_message.channel
@@ -499,11 +607,12 @@ async def set_events(ctx, schedule_message: discord.Message, schedule: Schedule)
         await channel.purge(check=not_admin)
         sync = await ctx.send(content='.', wait=True)
         msg = await ctx.send(
-            content=pinned_message_content,
+            content=pinned_message_content[0],
             ephemeral=False,
             file=js_file,
             wait=True,
-            suppress_embeds=True,
+            embeds=pinned_message_content[1],
+            # suppress_embeds=True,
             silent=True,
             allowed_mentions=discord.AllowedMentions.none()
         )
@@ -511,7 +620,16 @@ async def set_events(ctx, schedule_message: discord.Message, schedule: Schedule)
         await sync.delete(delay=1.0)
         for m in other_messages:
             await ctx.send(
-                content=m,
+                content=m[0],
+                # suppress_embeds=True,
+                wait=True,
+                embeds=m[1],
+                silent=True,
+                allowed_mentions=discord.AllowedMentions.none()
+            )
+        for p in texts:
+            await ctx.send(
+                content=p,
                 suppress_embeds=True,
                 silent=True,
                 allowed_mentions=discord.AllowedMentions.none()
@@ -535,10 +653,23 @@ class EventRemovalSelector(discord.ui.Select):
                 label=val,
                 value=val
             )
+        options = list(map(make_select_option, user_events))
+        dedup_list = []
+        for val, vals in itertools.groupby(options, lambda x: x.value):
+            foo = list(vals)
+            if len(foo) == 1:
+                dedup_list.append(foo[0])
+            else:
+                for i, select in list(zip(itertools.count(1), foo)):
+                    dedup_list.append(discord.SelectOption(
+                        label=f"{select.label} {i}",
+                        value=f"{select.value} {i}"
+                    ))
+
         super().__init__(
             custom_id='user_events',
             placeholder='Choose an event',
-            options=list(map(make_select_option, user_events))
+            options=dedup_list
         )
         self.response = response
 
