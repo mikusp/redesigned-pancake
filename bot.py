@@ -19,6 +19,7 @@ import os
 import sys
 import itertools
 from itertools import chain, groupby
+from rapidfuzz import fuzz
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -179,6 +180,9 @@ class Event:
             return not self.deleted
         except AttributeError:
             return True
+    
+    def merge(self, event):
+        self.__dict__.update(event.__dict__)
     
     @property
     def time(self):
@@ -465,7 +469,16 @@ class Schedule:
         return json.loads(jsonBytes, object_hook=eventDecoder)
 
     def add_event(self, event: Event):
-        bisect.insort(self.events, event, key=lambda e: e.approx_datetime())
+        potentially_duplicate_events = list(filter(lambda x: event.date == x.date, self.events))
+        duplicate_score = list(map(lambda x: (fuzz.token_set_ratio(x.name, event.name), x), potentially_duplicate_events))
+        likely_duplicate = list(filter(lambda x: x[0] > 50.0 , sorted(duplicate_score, key=lambda x: x[0])))
+        if likely_duplicate:
+            duplicate_name = (likely_duplicate[0][1]).name
+            index = [i for i, item in enumerate(self.events) if item.name == duplicate_name][0]
+            print(f'merging new event {event.name} into {duplicate_name}')
+            self.events[index].merge(event)
+        else:
+            bisect.insort(self.events, event, key=lambda e: e.approx_datetime())
         return self
 
     def remove_event(self, event_value: str):
