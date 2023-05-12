@@ -597,25 +597,24 @@ async def send_announcement(ctx: discord.Interaction, event: Event):
 async def add_event(ctx: discord.Interaction, schedule_message: discord.Message, event: Event):
     schedule = await Schedule.parse_msg(schedule_message)
     schedule.add_event(event)
-    await set_events(ctx, schedule_message, schedule)
+    await set_events(schedule_message, schedule)
     await send_announcement(ctx, event)
 
 async def clear_events(ctx: discord.Interaction, schedule_message: discord.Message):
-    await set_events(ctx, schedule_message, Schedule([]))
+    await set_events(schedule_message, Schedule([]))
 
 def not_admin(message: discord.Message):
     return message.author.id != ADMIN_ID
 
-async def set_events(ctx, schedule_message: discord.Message, schedule: Schedule):
+async def set_events(schedule_message: discord.Message, schedule: Schedule):
     js = schedule.dump_json()
-    if isinstance(ctx, discord.Interaction):
-        ctx = ctx.followup
     posts = schedule.format_post()
     embeds, texts = posts
     pinned_message_content, *other_messages = embeds
     js_file = discord.File(io.BytesIO(js.encode()), spoiler=True, filename='schedule.json')
 
     channel = schedule_message.channel
+    ctx = await get_webhook(channel)
     async with channel.typing():
         await channel.purge(check=not_admin)
         sync = await ctx.send(content='.', wait=True)
@@ -651,7 +650,7 @@ async def set_events(ctx, schedule_message: discord.Message, schedule: Schedule)
 async def remove_event(ctx: discord.Interaction, schedule_message: discord.Message, event_value: str):
     schedule = await Schedule.parse_msg(schedule_message)
     schedule.remove_event(event_value)
-    await set_events(ctx, schedule_message, schedule)
+    await set_events(schedule_message, schedule)
 
 async def get_user_events(schedule_message: discord.Message, user: Optional[str]):
     schedule = await Schedule.parse_msg(schedule_message)
@@ -738,7 +737,7 @@ class EventGroup(app_commands.Group):
         events = [ Event.from_gcal_event(ev) for ev in gcal_events ]
         # print('creating schedule')
         schedule = schedule.merge_gcal(events)
-        await set_events(ctx, pinned_message, schedule)
+        await set_events(pinned_message, schedule)
         followup = await ctx.followup.send(
             ephemeral=True,
             content="event list synced with gcal"
@@ -873,6 +872,15 @@ class CustomClient(discord.Client):
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
+async def get_webhook(channel: discord.TextChannel):
+    wh = await channel.webhooks()
+
+    if not wh:
+        wh = await channel.create_webhook(name='EventBot')
+        return wh
+    else:
+        return wh[0]
+
 @tasks.loop(time=datetime.time(hour=0, minute=1, tzinfo=tzinfo))
 async def update_task():
     channel = client.get_channel(UPCOMING_EVENTS)
@@ -884,16 +892,14 @@ async def update_task():
         schedule = await Schedule.parse_msg(pinned_message)
         schedule.cleanup()
 
-        wh = await channel.create_webhook(name='EventBot')
-
         try:
             gcal_events = gcal.fetch_events()
             events = [ Event.from_gcal_event(ev) for ev in gcal_events ]
             schedule = schedule.merge_gcal(events)
 
-            await set_events(wh, pinned_message, schedule)
+            await set_events(pinned_message, schedule)
         finally:
-            await wh.delete()
+            pass
 
 
 @client.event
