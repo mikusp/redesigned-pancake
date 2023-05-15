@@ -531,8 +531,8 @@ class Schedule:
         today = datetime.date.today()
         d = lambda x: today + datetime.timedelta(days=x)
         dates_in_this_week = []
-        if today.isoweekday == 1:
-            dates_in_this_week = list(itertools.islice(map(d, count(0)), 7))
+        if today.isoweekday() == 1:
+            dates_in_this_week = list(itertools.islice(map(d, itertools.count(0)), 7))
         else:
             dates_in_this_week = list(itertools.takewhile(lambda x: x.isoweekday() != 1, map(d, itertools.count(0))))
 
