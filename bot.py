@@ -829,7 +829,7 @@ class EventGroup(app_commands.Group):
         await ctx.response.defer(ephemeral=True)
         followup = None
         try:
-            author_safe = author.mention if ADMIN_ROLE_ID in list(map(lambda x: x.id, ctx.user.roles)) and author is not None else ctx.user.mention
+            author_safe = author.display_name if ADMIN_ROLE_ID in list(map(lambda x: x.id, ctx.user.roles)) and author is not None else ctx.user.display_name
             args = {
                 'days_until': date,
                 'url': url,
