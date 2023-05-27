@@ -471,7 +471,7 @@ class Schedule:
     def add_event(self, event: Event):
         potentially_duplicate_events = list(filter(lambda x: event.date == x.date, self.events))
         duplicate_score = list(map(lambda x: (fuzz.token_set_ratio(x.name, event.name), x), potentially_duplicate_events))
-        likely_duplicate = list(filter(lambda x: x[0] > 60.0 , sorted(duplicate_score, key=lambda x: x[0])))
+        likely_duplicate = list(filter(lambda x: x[0] > 75.0 , sorted(duplicate_score, key=lambda x: x[0])))
         if likely_duplicate:
             duplicate_name = (likely_duplicate[0][1]).name
             index = [i for i, item in enumerate(self.events) if item.name == duplicate_name][0]
