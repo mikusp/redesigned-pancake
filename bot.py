@@ -358,7 +358,11 @@ class Event:
     
 
     def make_embed(self, description_limit=4096) -> discord.Embed:
-        description = self.description[0:description_limit].replace('<br>', '\n').replace('<br />', '\n')
+        description = ''
+        try:
+            description = self.description[0:description_limit].replace('<br>', '\n').replace('<br />', '\n')
+        except AttributeError:
+            pass
         embed = discord.Embed(title=self.name, description=description, url=getattr(self, 'fb_url', None))
         if hasattr(self, 'img'):
             embed.set_image(url=self.img)
