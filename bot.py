@@ -42,6 +42,7 @@ NEW_EVENTS=int(os.environ['NEW_EVENTS'])
 ADMIN_ROLE_ID=int(os.environ['ADMIN_ROLE_ID'])
 ADMIN_ID=int(os.environ['ADMIN_ID'])
 MOD_ROLE_ID=int(os.environ['MOD_ROLE_ID'])
+ORGANIZER_ROLE_ID=int(os.environ['ORGANIZER_ROLE_ID'])
 CONTACT_SUBSTITUTIONS="substitutions.json"
 
 os.chdir(sys.path[0])
@@ -612,6 +613,7 @@ def not_admin(message: discord.Message):
 
 async def set_events(schedule_message: discord.Message, schedule: Schedule):
     js = schedule.dump_json()
+    # save json to file
     posts = schedule.format_post()
     embeds, texts = posts
     pinned_message_content, *other_messages = embeds
@@ -910,6 +912,26 @@ async def update_task():
 async def on_ready():
     await tree.sync(guild=discord.Object(id=GUILD_ID))
     print("Ready!")
+
+@client.event
+async def on_message(message: discord.Message):
+    async def process_message(message):
+        pass
+
+    author = message.author
+    channel = message.channel
+
+    if channel.id == UPCOMING_EVENTS:
+        if author.bot:
+            return
+        elif ORGANIZER_ROLE_ID in author.roles:
+            await process_message(message)
+            await message.delete()
+        elif author.id == ADMIN_ID:
+            await process_message(message)
+    else:
+        pass
+
 
 tree.add_command(EventGroup(), guild=discord.Object(id=GUILD_ID))
 
