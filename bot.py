@@ -822,12 +822,6 @@ class EventGroup(app_commands.Group):
                 await followup.delete(delay=60.0)
 
     @app_commands.command()
-    @app_commands.checks.has_role(ADMIN_ROLE_ID)
-    async def update(self, ctx: discord.Interaction):
-        """reserved for admin use"""
-        await update_task()
-
-    @app_commands.command()
     @app_commands.describe(name='Event name')
     @app_commands.describe(date='Event date')
     @app_commands.describe(time='Event time')
@@ -934,6 +928,13 @@ async def on_message(message: discord.Message):
     async def process_message(message):
         pass
 
+    async def process_admin_message(message):
+        if message.content.startswith('!update'):
+            await update_task()
+            return True
+
+        return False
+
     author = message.author
     channel = message.channel
 
@@ -941,10 +942,14 @@ async def on_message(message: discord.Message):
         if author.bot:
             return
         elif ORGANIZER_ROLE_ID in author.roles:
-            await process_message(message)
-            await message.delete()
+            try:
+                await process_message(message)
+            finally:
+                await message.delete()
         elif author.id == ADMIN_ID:
-            await process_message(message)
+            command_processed = await process_admin_message(message)
+            if command_processed:
+                await message.delete()
     else:
         pass
 
