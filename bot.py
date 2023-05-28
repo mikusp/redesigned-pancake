@@ -140,6 +140,7 @@ class Event:
         d['author'] = kwargs.get('discord_author', None)
         d['img'] = kwargs.get('img', None)
         d['location'] = kwargs.get('location', None)
+        d['city'] = kwargs.get('city', None)
         d['source'] = kwargs.get('source', None)
         d['deleted'] = kwargs.get('deleted', None)
 
@@ -164,11 +165,16 @@ class Event:
 
     def approx_datetime(self):
         if self.datetime:
+            if self.time:
+                return datetime.datetime.combine(self.datetime.date(), self.time, tzinfo=tzinfo)
             return self.datetime
         elif self._date:
             tz = pytz.timezone('Europe/London')
             dtime = datetime.datetime(self._date.year, self._date.month, self._date.day)
-            return tz.localize(dtime)
+            if self.time:
+                return datetime.datetime.combine(tz.localize(dtime).date(), self.time, tzinfo=tzinfo)
+            else:
+                return tz.localize(dtime)
         else:
             raise Exception(f'event {self.name} does not have a valid date')
 
@@ -390,8 +396,10 @@ class Event:
         errors = []
         if not self._date:
             errors.append('date cannot be empty')
-        # if not self.name:
-        #     errors.append("name cannot be empty")
+        if not self.name:
+            errors.append("name cannot be empty")
+        if not self._time:
+            errors.append('time cannot be empty')
         # if self.days_until < 0 or self.days_until > 13:
         #     errors.append("date is invalid, please choose one of the options")
         # if not self.url:
@@ -822,20 +830,28 @@ class EventGroup(app_commands.Group):
     @app_commands.command()
     @app_commands.describe(name='Event name')
     @app_commands.describe(date='Event date')
+    @app_commands.describe(time='Event time')
+    @app_commands.describe(venue='Event venue')
+    @app_commands.describe(city='City')
     @app_commands.describe(url='Event url')
     @app_commands.describe(author='Override event organizer (only admin)')
     @app_commands.autocomplete(date=date_autocomplete)
-    async def new(self, ctx: discord.Interaction, name: str, date: int, url: str, author: Optional[discord.Member]):
+    async def new(self, ctx: discord.Interaction, name: str, date: int, time: str, url: Optional[str], venue: Optional[str], city: Optional[str], author: Optional[discord.Member]):
         """Create a new event"""
         event = None
         await ctx.response.defer(ephemeral=True)
         followup = None
         try:
             author_safe = author.display_name if ADMIN_ROLE_ID in list(map(lambda x: x.id, ctx.user.roles)) and author is not None else ctx.user.display_name
+            time_parsed = parser.parse(time)
+            tz = pytz.timezone('Europe/London')
             args = {
                 'days_until': date,
                 'url': url,
-                'discord_author': author_safe
+                'discord_author': author_safe,
+                'location': venue,
+                'city': city,
+                'time': tz.localize(time_parsed).time()
             }
             event = Event.create(name, **args)
             print(vars(event))
