@@ -879,13 +879,6 @@ class EventGroup(app_commands.Group):
 intents = discord.Intents.default()
 intents.message_content = True
 
-class CustomClient(discord.Client):
-    def __init__(self, *args, **kwargs):
-        super().__init__(self, *args, **kwargs)
-
-    async def setup_hook(self):
-        update_task.start()
-
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
@@ -922,6 +915,9 @@ async def update_task():
 @client.event
 async def on_ready():
     await tree.sync(guild=discord.Object(id=GUILD_ID))
+    if not update_task.is_running():
+        print("starting update_task")
+        update_task.start()
     print("Ready!")
 
 @client.event
