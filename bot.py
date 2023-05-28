@@ -10,6 +10,7 @@ import pprint
 import urllib
 import pytz
 import validators
+import sqlite3
 
 from fb import Fb, driver
 import io
@@ -53,6 +54,10 @@ with open(CONTACT_SUBSTITUTIONS) as f:
         substitutions = json.loads(f.read())
     except e:
         print(e)
+
+db_con = sqlite3.connect("events.db")
+db_cur = db_con.cursor()
+db_cur.execute("CREATE TABLE IF NOT EXISTS events_log(id integer PRIMARY KEY, timestamp text DEFAULT CURRENT_TIMESTAMP, json TEXT, change TEXT)")
 
 tzinfo = ZoneInfo('Europe/London')
 
@@ -466,17 +471,12 @@ class Schedule:
 
     @classmethod
     async def parse_msg(cls, msg: discord.Message):
-        attachment = None
-        try:
-            attachment = msg.attachments[0]
-        except:
-            pass
-
-        if not attachment:
+        res = db_cur.execute("SELECT json FROM events_log ORDER BY id DESC LIMIT 1")
+        row = res.fetchone()
+        if row is None:
             return cls([])
         else:
-            file = await attachment.read()
-            return cls(Schedule.parse_json(file))
+            return cls(Schedule.parse_json(row[0]))
     
     def parse_json(jsonBytes):
         return json.loads(jsonBytes, object_hook=eventDecoder)
@@ -610,22 +610,24 @@ async def send_announcement(ctx: discord.Interaction, event: Event):
 async def add_event(ctx: discord.Interaction, schedule_message: discord.Message, event: Event):
     schedule = await Schedule.parse_msg(schedule_message)
     schedule.add_event(event)
-    await set_events(schedule_message, schedule)
+    await set_events(schedule_message, schedule, change_reason=f'add event {event.name}')
     await send_announcement(ctx, event)
 
 async def clear_events(ctx: discord.Interaction, schedule_message: discord.Message):
-    await set_events(schedule_message, Schedule([]))
+    await set_events(schedule_message, Schedule([]), change_reason='explicit clear')
 
 def not_admin(message: discord.Message):
     return message.author.id != ADMIN_ID
 
-async def set_events(schedule_message: discord.Message, schedule: Schedule):
+async def set_events(schedule_message: discord.Message, schedule: Schedule, change_reason: Optional[str]=None):
     js = schedule.dump_json()
-    # save json to file
+    data = [(js, change_reason if change_reason else '')]
+    db_cur.executemany("INSERT INTO events_log(json, change) VALUES(?, ?);", data)
+    db_con.commit()
     posts = schedule.format_post()
     embeds, texts = posts
     pinned_message_content, *other_messages = embeds
-    js_file = discord.File(io.BytesIO(js.encode()), spoiler=True, filename='schedule.json')
+    # js_file = discord.File(io.BytesIO(js.encode()), spoiler=True, filename='schedule.json')
 
     channel = schedule_message.channel
     ctx = await get_webhook(channel)
@@ -635,7 +637,6 @@ async def set_events(schedule_message: discord.Message, schedule: Schedule):
         msg = await ctx.send(
             content=pinned_message_content[0],
             ephemeral=False,
-            file=js_file,
             wait=True,
             embeds=pinned_message_content[1],
             # suppress_embeds=True,
@@ -664,7 +665,7 @@ async def set_events(schedule_message: discord.Message, schedule: Schedule):
 async def remove_event(ctx: discord.Interaction, schedule_message: discord.Message, event_value: str):
     schedule = await Schedule.parse_msg(schedule_message)
     schedule.remove_event(event_value)
-    await set_events(schedule_message, schedule)
+    await set_events(schedule_message, schedule, change_reason=f'remove event {event_value}')
 
 async def get_user_events(schedule_message: discord.Message, user: Optional[str]):
     schedule = await Schedule.parse_msg(schedule_message)
@@ -913,7 +914,7 @@ async def update_task():
             events = [ Event.from_gcal_event(ev) for ev in gcal_events ]
             schedule = schedule.merge_gcal(events)
 
-            await set_events(pinned_message, schedule)
+            await set_events(pinned_message, schedule, change_reason='update task')
         finally:
             pass
 
